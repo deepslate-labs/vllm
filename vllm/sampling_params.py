@@ -44,6 +44,7 @@ class StructuredOutputsParams:
     disable_additional_properties: bool = False
     whitespace_pattern: str | None = None
     structural_tag: str | None = None
+    tokenizer: Any | None = None
 
     _backend: str | None = field(default=None, init=False)
     """CAUTION: Should only be set by Processor._validate_structured_output"""

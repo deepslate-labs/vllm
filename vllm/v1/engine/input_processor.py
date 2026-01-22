@@ -2,8 +2,9 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import time
+import typing
 from collections.abc import Mapping
-from typing import Any, Literal, cast
+from typing import Any, Literal, Union, cast
 
 from vllm.config import VllmConfig
 from vllm.exceptions import VLLMValidationError
@@ -51,6 +52,11 @@ from vllm.v1.structured_output.backend_outlines import (
 from vllm.v1.structured_output.backend_xgrammar import validate_xgrammar_grammar
 
 logger = init_logger(__name__)
+
+if typing.TYPE_CHECKING:
+    import llguidance.hf
+    from llguidance import LLTokenizer
+    from transformers import PreTrainedTokenizerBase, PreTrainedTokenizerFast
 
 
 class InputProcessor:
@@ -333,6 +339,22 @@ class InputProcessor:
             )
 
     def _validate_structured_output(self, params: SamplingParams) -> None:
+        def _guidance_tokenizer(
+            tokenizer: Union["PreTrainedTokenizerBase", "LLTokenizer"] | None
+        ) -> Union["LLTokenizer", None]:
+            # Import here so we don't unnecessarily import transformers or llguidance
+            from transformers import PreTrainedTokenizerFast
+            from llguidance import LLTokenizer
+            import llguidance.hf
+
+            if isinstance(tokenizer, LLTokenizer):
+                return tokenizer
+            elif isinstance(tokenizer, PreTrainedTokenizerFast):
+                return llguidance.hf.from_tokenizer(tokenizer)
+
+            # Unsupported tokenizer
+            return None
+
         if not params.structured_outputs or not self.structured_outputs_config:
             return
 
@@ -390,7 +412,7 @@ class InputProcessor:
                     "structured output backend. Please use ['xgrammar', 'outlines'] "
                     "backends or tokenizer_mode='hf' instead."
                 )
-            validate_guidance_grammar(params, tokenizer=None)
+            validate_guidance_grammar(params, tokenizer=_guidance_tokenizer(params.structured_outputs.tokenizer))
         elif backend == "outlines":
             # outlines backend
             validate_structured_output_request_outlines(params)
@@ -437,10 +459,13 @@ class InputProcessor:
                     params.structured_outputs._backend = "outlines"
                 else:
                     # Fall back to guidance by default.
-                    validate_guidance_grammar(params, tokenizer=None)
+                    validate_guidance_grammar(params, tokenizer=_guidance_tokenizer(params.structured_outputs.tokenizer))
                     params.structured_outputs._backend = "guidance"
             # Remember that this backend was set automatically
             params.structured_outputs._backend_was_auto = True
+
+        # Throw away the tokenizer reference so it's not passed across worker processes
+        params.structured_outputs.tokenizer = None
 
         # Run post-init validation. This is also important to ensure subsequent
         # roundtrip serialization/deserialization won't fail.
