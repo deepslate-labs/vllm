@@ -244,6 +244,9 @@ def serialize_guidance_grammar(
             tp = "regex"
         elif request_type == StructuredOutputOptions.GRAMMAR:
             tp = "grammar"
+            # A JSON object is an llguidance-native top-level grammar
+            if isinstance(grammar_spec, str) and grammar_spec.lstrip().startswith("{"):
+                tp = "llguidance"
         elif request_type == StructuredOutputOptions.CHOICE:
             tp = "choice"
         elif request_type == StructuredOutputOptions.STRUCTURAL_TAG:
