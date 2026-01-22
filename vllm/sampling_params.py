@@ -108,6 +108,7 @@ class StructuredOutputsParams:
     disable_additional_properties: bool = False
     whitespace_pattern: str | None = None
     structural_tag: str | None = None
+    tokenizer: Any | None = None
 
     _backend: str | None = field(default=None, init=False)
     """CAUTION: Should only be set by Processor._validate_structured_output"""
@@ -263,6 +264,23 @@ def _is_non_tekken_mistral(tokenizer: TokenizerLike) -> bool:
 
 def _get_llg_tokenizer(tokenizer: TokenizerLike) -> Any:
     return tokenizer.llg_tokenizer if is_mistral_tokenizer(tokenizer) else None
+
+
+def _guidance_tokenizer(tokenizer: Any):
+    """Resolve a request-supplied tokenizer to an llguidance LLTokenizer."""
+    if tokenizer is None:
+        return None
+    from llguidance import LLTokenizer
+
+    if isinstance(tokenizer, LLTokenizer):
+        return tokenizer
+    from transformers import PreTrainedTokenizerFast
+
+    if isinstance(tokenizer, PreTrainedTokenizerFast):
+        import llguidance.hf
+
+        return llguidance.hf.from_tokenizer(tokenizer)
+    return None
 
 
 class SamplingParams(
@@ -1354,7 +1372,8 @@ class SamplingParams(
             # Without tokenizer these are disallowed in grammars.
             validate_guidance_grammar(
                 self,
-                tokenizer=_get_llg_tokenizer(tokenizer),
+                tokenizer=_guidance_tokenizer(self.structured_outputs.tokenizer)
+                or _get_llg_tokenizer(tokenizer),
             )
         elif backend == "outlines":
             # outlines backend
@@ -1431,11 +1450,15 @@ class SamplingParams(
                         ) from None
                     validate_guidance_grammar(
                         self,
-                        tokenizer=_get_llg_tokenizer(tokenizer),
+                        tokenizer=_guidance_tokenizer(self.structured_outputs.tokenizer)
+                        or _get_llg_tokenizer(tokenizer),
                     )
                     self.structured_outputs._backend = "guidance"
             # Remember that this backend was set automatically
             self.structured_outputs._backend_was_auto = True
+
+        # Drop the tokenizer reference so it is not shipped to the engine core.
+        self.structured_outputs.tokenizer = None
 
         # Run post-init validation. This is also important to ensure subsequent
         # roundtrip serialization/deserialization won't fail.
