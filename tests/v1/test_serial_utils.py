@@ -238,6 +238,34 @@ def test_numpy_array_serialization():
     )
 
 
+@pytest.mark.parametrize("size_threshold", [1 << 20, 64])
+def test_engine_core_output_readout_round_trip(size_threshold: int):
+    """Readout rows survive inline and as aux buffers, including row views."""
+    from vllm.v1.engine import EngineCoreOutput, EngineCoreOutputs
+
+    step = np.arange(5 * 32, dtype=np.float32).reshape(5, 32)
+    readouts = [step[1:3], step[4:5], None]
+    outputs = EngineCoreOutputs(
+        outputs=[
+            EngineCoreOutput(f"r{i}", [i] * (1 if r is None else len(r)), new_readout=r)
+            for i, r in enumerate(readouts)
+        ]
+    )
+    encoder = MsgpackEncoder(size_threshold=size_threshold)
+    decoder = MsgpackDecoder(EngineCoreOutputs)
+
+    encoded = encoder.encode(outputs)
+    decoded = decoder.decode(encoded)
+
+    assert (len(encoded) > 1) == (size_threshold < step[1:3].nbytes)
+    for output, readout in zip(decoded.outputs, readouts):
+        if readout is None:
+            assert output.new_readout is None
+        else:
+            assert output.new_readout.dtype == np.float32
+            np.testing.assert_array_equal(output.new_readout, readout)
+
+
 class CustomClass:
     def __init__(self, value):
         self.value = value
