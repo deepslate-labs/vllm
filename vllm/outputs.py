@@ -61,6 +61,12 @@ class CompletionOutput:
             position if the logprobs are requested.
         sampling_mask: The post-processing token support set for each generated
             token, if requested.
+        readout: ``[len(token_ids), readout_width]`` float32 rows, one per
+            entry of ``token_ids``, when the model implements
+            ``SupportsTokenReadout``; None otherwise. Row ``i`` is computed at
+            the position that sampled ``token_ids[i]``. Requires
+            ``RequestOutputKind.DELTA`` for per-step rows; other output kinds
+            receive all rows on the final output only.
         finish_reason: The reason why the sequence is finished.
         stop_reason: The stop string or token id that caused the completion
             to stop, None if the completion finished for some other reason
@@ -88,6 +94,7 @@ class CompletionOutput:
     sampling_mask: SamplingMask | None = None
     spec_decode_metrics: RequestSpecDecodeMetrics | None = None
     weight_versions: list[WeightVersionSpan] | None = None
+    readout: np.ndarray | None = None
 
     def finished(self) -> bool:
         return self.finish_reason is not None
@@ -224,6 +231,13 @@ class RequestOutput:
                             completion.sampling_mask.token_ids.extend(
                                 next_completion.sampling_mask.token_ids
                             )
+                        if next_completion.readout is not None:
+                            if completion.readout is None:
+                                completion.readout = next_completion.readout
+                            else:
+                                completion.readout = np.concatenate(
+                                    (completion.readout, next_completion.readout)
+                                )
                         if next_completion.spec_decode_metrics is not None:
                             completion.spec_decode_metrics = (
                                 next_completion.spec_decode_metrics

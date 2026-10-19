@@ -191,6 +191,7 @@ class RequestState:
         # Routed experts accumulation (prompt + sample chunks)
         self.routed_experts_chunks: list[np.ndarray] = []
         self.sampling_mask_chunks: list[SamplingMaskLists] = []
+        self.readout_chunks: list[np.ndarray] = []
         # (weight version, first output-token index) for each span.
         self.weight_version_starts: list[tuple[str, int]] = []
 
@@ -462,6 +463,15 @@ class RequestState:
             if delta:
                 self.sampling_mask_chunks.clear()
 
+        readout = None
+        if (delta or finished) and self.readout_chunks:
+            if len(self.readout_chunks) == 1:
+                readout = self.readout_chunks[0]
+            else:
+                readout = np.concatenate(self.readout_chunks)
+            if delta:
+                self.readout_chunks.clear()
+
         # Concatenate routed experts on finish
         routed_experts = None
         if finished and self.routed_experts_chunks:
@@ -473,6 +483,7 @@ class RequestState:
             token_ids=token_ids,
             routed_experts=routed_experts,
             sampling_mask=sampling_mask,
+            readout=readout,
             logprobs=logprobs,
             cumulative_logprob=self.logprobs_processor.cumulative_logprob,
             finish_reason=str(finish_reason) if finished else None,
@@ -779,6 +790,8 @@ class OutputProcessor:
                     req_state.sampling_mask_chunks.append(
                         engine_core_output.new_sampling_mask
                     )
+                if engine_core_output.new_readout is not None:
+                    req_state.readout_chunks.append(engine_core_output.new_readout)
 
                 # 3) Compute sample and prompt logprobs for request,
                 # if required.
@@ -849,6 +862,8 @@ class OutputProcessor:
             output.new_sampling_mask = output.new_sampling_mask.slice_request(
                 0, num_kept
             )
+        if output.new_readout is not None:
+            output.new_readout = output.new_readout[:num_kept]
         if output.routed_experts is not None:
             req_state.routed_experts_chunks[-1] = output.routed_experts[:-num_dropped]
 

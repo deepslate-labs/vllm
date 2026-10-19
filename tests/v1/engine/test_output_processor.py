@@ -67,6 +67,7 @@ def test_delta_output_without_new_tokens_returns_empty_logprobs(
     state.request_index = 0
     state.sampling_mask_chunks = []
     state.routed_experts_chunks = []
+    state.readout_chunks = []
     state.spec_decode_metrics = None
 
     output = state._new_completion_output([], None, None)
@@ -92,6 +93,7 @@ def test_completion_output_preserves_each_sampling_mask_position() -> None:
         SamplingMaskLists(token_ids=np.array([30, 31, 32])),
     ]
     state.routed_experts_chunks = []
+    state.readout_chunks = []
     state.spec_decode_metrics = None
     state.weight_version_starts = []
 
@@ -1691,6 +1693,7 @@ def test_sampling_masks_follow_output_kind(output_kind):
     state.request_index = 0
     state.sampling_mask_chunks = []
     state.routed_experts_chunks = []
+    state.readout_chunks = []
     state.spec_decode_metrics = None
     state.weight_version_starts = []
 
@@ -1733,6 +1736,82 @@ def test_request_output_add_merges_delta_sampling_masks():
 
     assert merged.outputs[0].token_ids == [10, 20]
     assert merged.outputs[0].sampling_mask.token_ids == [[10, 11], [20]]
+
+
+@pytest.mark.parametrize("output_kind", list(RequestOutputKind))
+def test_readouts_follow_output_kind(output_kind):
+    state = RequestState.__new__(RequestState)
+    state.detokenizer = MagicMock()
+    state.detokenizer.get_next_output_text.return_value = ""
+    state.logprobs_processor = MagicMock()
+    state.logprobs_processor.logprobs = None
+    state.logprobs_processor.cumulative_logprob = None
+    state.output_kind = output_kind
+    state.request_index = 0
+    state.sampling_mask_chunks = []
+    state.routed_experts_chunks = []
+    state.readout_chunks = []
+    state.spec_decode_metrics = None
+    state.weight_version_starts = []
+
+    steps = [np.full((1, 2), i, dtype=np.float32) for i in range(3)]
+    readouts = []
+    for i, rows in enumerate(steps):
+        state.readout_chunks.append(rows)
+        finish = FinishReason.LENGTH if i == len(steps) - 1 else None
+        readouts.append(state._new_completion_output([i], finish, None).readout)
+
+    if output_kind == RequestOutputKind.DELTA:
+        for readout, rows in zip(readouts, steps):
+            np.testing.assert_array_equal(readout, rows)
+    else:
+        assert readouts[:2] == [None, None]
+        np.testing.assert_array_equal(readouts[2], np.concatenate(steps))
+
+
+def test_trim_surplus_tokens_trims_readout():
+    state = MagicMock()
+    state.detokenizer.num_output_tokens.return_value = 6
+    rows = np.arange(6, dtype=np.float32).reshape(3, 2)
+    output = EngineCoreOutput(
+        request_id="request", new_token_ids=[1, 2, 3], new_readout=rows
+    )
+
+    OutputProcessor._trim_surplus_tokens(state, output, num_prev_tokens=5)
+
+    assert output.new_token_ids == [1]
+    np.testing.assert_array_equal(output.new_readout, rows[:1])
+
+
+def test_request_output_add_concatenates_delta_readouts():
+    def delta(token_ids, readout):
+        completion = CompletionOutput(
+            index=0,
+            text="",
+            token_ids=token_ids,
+            cumulative_logprob=None,
+            logprobs=None,
+            readout=readout,
+        )
+        return RequestOutput(
+            request_id="request",
+            prompt=None,
+            prompt_token_ids=[1],
+            prompt_logprobs=None,
+            outputs=[completion],
+            finished=False,
+        )
+
+    first = np.zeros((1, 2), dtype=np.float32)
+    second = np.ones((2, 2), dtype=np.float32)
+    merged = delta([], None)
+    merged.add(delta([10], first), aggregate=True)
+    merged.add(delta([20, 30], second), aggregate=True)
+
+    assert merged.outputs[0].token_ids == [10, 20, 30]
+    np.testing.assert_array_equal(
+        merged.outputs[0].readout, np.concatenate((first, second))
+    )
 
 
 @pytest.mark.skip_global_cleanup
