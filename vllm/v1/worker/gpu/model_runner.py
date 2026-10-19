@@ -48,7 +48,11 @@ from vllm.model_executor.layers.mamba.ops.ssu_dispatch import (
 )
 from vllm.model_executor.model_loader import get_model_loader
 from vllm.model_executor.model_loader.reload.inplace import reload_weights
-from vllm.model_executor.models.interfaces import requires_raw_input_tokens
+from vllm.model_executor.models.interfaces import (
+    SupportsTokenReadout,
+    requires_raw_input_tokens,
+    supports_token_readout,
+)
 from vllm.model_executor.offloader import (
     create_offloader,
     get_offloader,
@@ -335,6 +339,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self.sampler: Sampler | None = None
         self.rejection_sampler: RejectionSampler | None = None
         self.batch_sharder: BatchSharder | None = None
+        self.readout_model: SupportsTokenReadout | None = None
         self.prompt_logprobs_worker: PromptLogprobsWorker | None = None
         self.structured_outputs_worker: StructuredOutputsWorker | None = None
         self.cudagraph_manager: ModelCudaGraphManager | None = None
@@ -451,6 +456,14 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     "compute_logits_local",
                     type(self.model).__name__,
                 )
+
+        self.readout_model = self.model if supports_token_readout(self.model) else None
+        if self.readout_model is not None and self.batch_sharder is not None:
+            # Sharded sampling reorders the rows and splits the vocabulary.
+            raise ValueError(
+                f"{type(self.model).__name__} computes a token readout, which "
+                "is not supported with enable_batch_sharded_sampling."
+            )
 
         # Initialize samplers. Model states may override via custom_sampler().
         config_processors = self.model_config.logits_processors or ()
@@ -972,6 +985,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
     def _dummy_sampler_run(self, hidden_states: torch.Tensor) -> None:
         num_reqs = hidden_states.shape[0]
         logits = self.model.compute_logits(hidden_states)
+        if self.readout_model is not None:
+            self.readout_model.compute_readout(hidden_states, logits)
         dummy_input_batch = InputBatch.make_dummy(
             num_reqs, num_reqs, self.input_buffers
         )
@@ -1594,7 +1609,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         hidden_states: torch.Tensor,
         input_batch: InputBatch,
         grammar_output: GrammarOutput | None,
-    ) -> tuple[SamplerOutput, torch.Tensor, torch.Tensor]:
+    ) -> tuple[SamplerOutput, torch.Tensor, torch.Tensor, torch.Tensor | None]:
         shard_metadata = None
         global_input_batch = input_batch
         if self.batch_sharder is not None:
@@ -1613,6 +1628,11 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         else:
             sample_hidden_states = hidden_states[input_batch.logits_indices]
             logits = self.model.compute_logits(sample_hidden_states)
+
+        # Before the grammar bitmask and the sampler modify the logits in place.
+        readout = None
+        if self.readout_model is not None:
+            readout = self.readout_model.compute_readout(sample_hidden_states, logits)
 
         invalid_drafts = None
         # A diffusion prefill has no logit rows even when a bitmask row
@@ -1674,7 +1694,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             )
 
         assert sampler_output is not None
-        return sampler_output, sampler_output.num_sampled, sampler_output.num_rejected
+        return (
+            sampler_output,
+            sampler_output.num_sampled,
+            sampler_output.num_rejected,
+            readout,
+        )
 
     def postprocess_sampled(
         self,
@@ -2134,7 +2159,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 self.pcp_manager.restore_for_sampling(hidden_states, aux_hidden_states)
             )
 
-        sampler_output, num_sampled, num_rejected = self.sample(
+        sampler_output, num_sampled, num_rejected, readout = self.sample(
             hidden_states, input_batch, grammar_output
         )
 
@@ -2189,6 +2214,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             copy_stream=self.output_copy_stream,
             check_ep_fault=self.check_ep_fault,
             pending_aux_output=pending_aux_output,
+            readout=readout,
+            readout_cu_num_rows=(
+                input_batch.cu_num_logits_np.tolist()
+                if readout is not None and input_batch.num_draft_tokens > 0
+                else None
+            ),
         )
 
         mm_inputs: tuple[list[torch.Tensor], torch.Tensor] | None = None

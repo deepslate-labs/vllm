@@ -15,6 +15,7 @@ from vllm.v1.outputs import (
     LogprobsTensors,
     ModelRunnerOutput,
     PoolerOutput,
+    TokenReadouts,
 )
 from vllm.v1.worker.gpu.sample.output import SamplerOutput, SamplingMaskTensors
 from vllm.v1.worker.utils import raise_if_nan_logits
@@ -122,6 +123,8 @@ class AsyncOutput(AsyncModelRunnerOutput):
         copy_stream: torch.cuda.Stream,
         check_ep_fault: bool,
         pending_aux_output: "PendingAuxOutput | None",
+        readout: torch.Tensor | None = None,
+        readout_cu_num_rows: list[int] | None = None,
     ):
         # NOTE(woosuk): We must retain references to the GPU tensors,
         # as the copy operations are performed on a different CUDA stream than
@@ -130,6 +133,8 @@ class AsyncOutput(AsyncModelRunnerOutput):
         self.sampler_output = sampler_output
         self.num_sampled_tokens = num_sampled_tokens
         self.pending_aux_output = pending_aux_output
+        self.readout = readout
+        self.readout_cu_num_rows = readout_cu_num_rows
         # Blocking (sleep) event to avoid busy-polling the CUDA driver lock.
         self.copy_event = torch.cuda.Event(blocking=True)
         self._has_fault: torch.Tensor | None = None
@@ -147,6 +152,9 @@ class AsyncOutput(AsyncModelRunnerOutput):
             if sampler_output.num_nans is not None:
                 self.num_nans = async_copy_to_np(sampler_output.num_nans)
             self.num_sampled_tokens_np = async_copy_to_np(num_sampled_tokens)
+            self.readout_np: np.ndarray | None = None
+            if readout is not None:
+                self.readout_np = async_copy_to_np(readout)
             self.sampling_mask_tensors: SamplingMaskTensors | None = None
             if sampler_output.sampling_mask_tensors is not None:
                 self.sampling_mask_tensors = (
@@ -186,6 +194,11 @@ class AsyncOutput(AsyncModelRunnerOutput):
         if self.sampling_mask_tensors is not None:
             self.model_runner_output.sampling_masks = (
                 self.sampling_mask_tensors.tolists(self.num_sampled_tokens_np)
+            )
+
+        if self.readout_np is not None:
+            self.model_runner_output.readouts = TokenReadouts(
+                self.readout_np, self.readout_cu_num_rows
             )
 
         if self.num_nans is not None:

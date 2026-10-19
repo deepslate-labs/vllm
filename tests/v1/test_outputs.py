@@ -14,6 +14,7 @@ from vllm.v1.outputs import (
     LogprobsTensors,
     ModelRunnerOutput,
     SamplingMaskLists,
+    TokenReadouts,
 )
 from vllm.v1.sample.ops.topk_topp_sampler import apply_top_k_top_p
 from vllm.v1.worker.gpu.sample.output import SamplingMaskTensors
@@ -89,6 +90,17 @@ def test_sampling_mask_lists_slices_multiple_positions_by_request():
     assert single.offsets is None
     assert multi.to_nested_list() == [[20], [30, 31, 32]]
     assert multi.cu_num_generated_tokens is None
+
+
+def test_token_readouts_slice_request_by_row_offsets():
+    rows = np.arange(12, dtype=np.float32).reshape(6, 2)
+
+    one_row_each = TokenReadouts(rows)
+    blocks = TokenReadouts(rows, cu_num_rows=[0, 3, 4, 6])
+
+    np.testing.assert_array_equal(one_row_each.slice_request(2, 1), rows[2:3])
+    np.testing.assert_array_equal(blocks.slice_request(0, 2), rows[0:2])
+    np.testing.assert_array_equal(blocks.slice_request(2, 2), rows[4:6])
 
 
 @pytest.mark.parametrize("max_num_kept", [512, 20_001])

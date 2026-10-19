@@ -86,6 +86,20 @@ class SamplingMaskLists(NamedTuple):
         return [token_ids[offsets[i] : offsets[i + 1]] for i in range(len(offsets) - 1)]
 
 
+class TokenReadouts(NamedTuple):
+    """Readout rows of one step, request-major, one row per logits position."""
+
+    # [num_logits, readout_width] float32
+    rows: np.ndarray
+    # [num_reqs + 1] first row of each request, or None for one row per request.
+    cu_num_rows: list[int] | None = None
+
+    def slice_request(self, req_idx: int, num_positions: int) -> np.ndarray:
+        """The first ``num_positions`` rows of request ``req_idx``."""
+        start = req_idx if self.cu_num_rows is None else self.cu_num_rows[req_idx]
+        return self.rows[start : start + num_positions]
+
+
 class LogprobsTensors(NamedTuple):
     # [num_reqs x num_generated_tokens, max_num_logprobs + 1]
     logprob_token_ids: torch.Tensor
@@ -309,6 +323,9 @@ class ModelRunnerOutput:
 
     # ``None`` when ``return_sampling_mask`` is off.
     sampling_masks: SamplingMaskLists | None = None
+
+    # ``None`` when the model has no token readout.
+    readouts: TokenReadouts | None = None
 
     @staticmethod
     def with_kv_conn_output_only(

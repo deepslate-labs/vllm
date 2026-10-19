@@ -77,6 +77,7 @@ from vllm.model_executor.models.interfaces import (
     supports_mrope,
     supports_multimodal_pruning,
     supports_realtime,
+    supports_token_readout,
     supports_transcription,
 )
 from vllm.model_executor.models.interfaces_base import (
@@ -5057,6 +5058,11 @@ class GPUModelRunner(
                     self.model = model or model_loader.load_model(
                         vllm_config=self.vllm_config,
                         model_config=self.model_config,
+                    )
+                if supports_token_readout(self.model):
+                    raise NotImplementedError(
+                        f"{type(self.model).__name__} computes a token readout, "
+                        "which only Model Runner V2 supports."
                     )
                 lookback_depth = getattr(self.model, "token_lookback_depth", 0)
                 if lookback_depth > 0:
