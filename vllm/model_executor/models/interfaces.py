@@ -880,6 +880,48 @@ def supports_hc_sp(
 
 
 @runtime_checkable
+class SupportsTokenReadout(Protocol):
+    """A model that derives a fixed-width float32 row from every sampled
+    position.
+
+    The row is computed from the position's final hidden state and its logits
+    before structured-output masks, penalties or temperature touch them. It is
+    returned to the client next to the sampled token in
+    ``CompletionOutput.readout``. Only Model Runner V2 computes readouts.
+    """
+
+    readout_width: int
+    """
+    The number of float32 values per row. Zero means the loaded checkpoint has
+    no readout and nothing is computed or allocated.
+    """
+
+    def compute_readout(self, hidden_states: Tensor, logits: Tensor) -> Tensor:
+        """Compute the readout rows of one step.
+
+        Args:
+            hidden_states: ``[num_rows, hidden_size]`` final hidden states of
+                the positions that produce logits.
+            logits: ``[num_rows, vocab_size]`` logits of the same positions,
+                unmasked and untempered. They must not be modified.
+
+        Returns:
+            A ``[num_rows, readout_width]`` float32 tensor on the device of
+            ``hidden_states``.
+
+        """
+        ...
+
+
+def supports_token_readout(model: object) -> TypeIs[SupportsTokenReadout]:
+    """Whether ``model`` implements the token readout with a non-zero width."""
+    return (
+        isinstance(model, SupportsTokenReadout)
+        and getattr(model, "readout_width", 0) > 0
+    )
+
+
+@runtime_checkable
 class HasInnerState(Protocol):
     """The interface required for all models that has inner state."""
 

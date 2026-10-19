@@ -9,6 +9,7 @@ from .interfaces import (
     SupportsMultiModal,
     SupportsMultiModalEmbeddings,
     SupportsPP,
+    SupportsTokenReadout,
     SupportsTranscription,
     has_inner_state,
     supports_hc_sp,
@@ -17,6 +18,7 @@ from .interfaces import (
     supports_multimodal,
     supports_multimodal_embeddings,
     supports_pp,
+    supports_token_readout,
     supports_transcription,
 )
 from .interfaces_base import (
@@ -47,6 +49,8 @@ __all__ = [
     "supports_mrope",
     "SupportsPP",
     "supports_pp",
+    "SupportsTokenReadout",
+    "supports_token_readout",
     "SupportsTranscription",
     "supports_transcription",
 ]
