@@ -1783,6 +1783,38 @@ def test_trim_surplus_tokens_trims_readout():
     np.testing.assert_array_equal(output.new_readout, rows[:1])
 
 
+def test_stop_string_inside_a_step_trims_readout_rows():
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained("facebook/opt-125m")
+    output_processor = OutputProcessor(tokenizer, log_stats=False)
+    request = EngineCoreRequest(
+        request_id="request-int",
+        external_req_id="request",
+        prompt_token_ids=tokenizer.encode("Count:"),
+        mm_features=None,
+        arrival_time=0,
+        lora_request=None,
+        cache_salt=None,
+        data_parallel_rank=None,
+        sampling_params=SamplingParams(
+            output_kind=RequestOutputKind.DELTA, stop=[" two"]
+        ),
+        pooling_params=None,
+    )
+    output_processor.add_request(request, None)
+    tokens = tokenizer.encode(" one two three four", add_special_tokens=False)
+    rows = np.arange(len(tokens) * 2, dtype=np.float32).reshape(-1, 2)
+
+    processed = output_processor.process_outputs(
+        [EngineCoreOutput("request-int", list(tokens), new_readout=rows)]
+    )
+
+    completion = processed.request_outputs[0].outputs[0]
+    assert 0 < len(completion.token_ids) < len(tokens)
+    np.testing.assert_array_equal(completion.readout, rows[: len(completion.token_ids)])
+
+
 def test_request_output_add_concatenates_delta_readouts():
     def delta(token_ids, readout):
         completion = CompletionOutput(

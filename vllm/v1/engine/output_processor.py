@@ -790,8 +790,12 @@ class OutputProcessor:
                     req_state.sampling_mask_chunks.append(
                         engine_core_output.new_sampling_mask
                     )
-                if engine_core_output.new_readout is not None:
-                    req_state.readout_chunks.append(engine_core_output.new_readout)
+                if (new_readout := engine_core_output.new_readout) is not None:
+                    # Kept until the final output outside DELTA, where a view
+                    # would pin every step's whole message buffer.
+                    if req_state.output_kind != RequestOutputKind.DELTA:
+                        new_readout = new_readout.copy()
+                    req_state.readout_chunks.append(new_readout)
 
                 # 3) Compute sample and prompt logprobs for request,
                 # if required.
