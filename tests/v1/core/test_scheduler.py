@@ -68,6 +68,7 @@ from vllm.v1.outputs import (
     KVConnectorOutput,
     ModelRunnerOutput,
     SamplingMaskLists,
+    TokenReadouts,
     make_empty_encoder_model_runner_output,
 )
 from vllm.v1.request import Request, RequestStatus
@@ -1040,6 +1041,83 @@ def test_update_from_output_routes_multi_position_sampling_masks():
         [[1, 6], [2]],
         [[3, 7, 8], [4], [5, 9]],
     ]
+
+
+def _running_requests(scheduler: Scheduler, requests: list[Request]) -> None:
+    for req in requests:
+        req.num_computed_tokens = req.num_tokens
+        scheduler.requests[req.request_id] = req
+        scheduler.running.append(req)
+        req.status = RequestStatus.RUNNING
+
+
+def test_update_from_output_routes_readouts_by_request():
+    """Each request receives the readout row at its own batch index."""
+    scheduler = create_scheduler()
+    requests = create_requests(num_requests=3, max_tokens=10)
+    _running_requests(scheduler, requests)
+    scheduler_output = SchedulerOutput(
+        scheduled_new_reqs=[],
+        scheduled_cached_reqs=CachedRequestData.make_empty(),
+        num_scheduled_tokens={req.request_id: 1 for req in requests},
+        total_num_scheduled_tokens=3,
+        scheduled_encoder_inputs={},
+        scheduled_spec_decode_tokens={},
+        finished_req_ids=set(),
+        free_encoder_mm_hashes=[],
+    )
+    rows = np.arange(12, dtype=np.float32).reshape(3, 4)
+    model_output = ModelRunnerOutput(
+        req_ids=[req.request_id for req in requests],
+        req_id_to_index={req.request_id: i for i, req in enumerate(requests)},
+        sampled_token_ids=[[1], [3], [4]],
+        logprobs=None,
+        prompt_logprobs_dict={},
+        pooler_output=[],
+        readouts=TokenReadouts(rows),
+    )
+
+    outputs = scheduler.update_from_output(scheduler_output, model_output)[0].outputs
+
+    assert [out.request_id for out in outputs] == [req.request_id for req in requests]
+    for i, out in enumerate(outputs):
+        np.testing.assert_array_equal(out.new_readout, rows[i : i + 1])
+
+
+def test_update_from_output_trims_readouts_with_stopped_tokens():
+    """Rows past a stop token are dropped with the tokens they belong to."""
+    scheduler = create_scheduler(num_speculative_tokens=2)
+    requests = create_requests(num_requests=2, max_tokens=10, stop_token_ids=[42])
+    _running_requests(scheduler, requests)
+    scheduler_output = SchedulerOutput(
+        scheduled_new_reqs=[],
+        scheduled_cached_reqs=CachedRequestData.make_empty(),
+        num_scheduled_tokens={requests[0].request_id: 3, requests[1].request_id: 2},
+        total_num_scheduled_tokens=5,
+        scheduled_encoder_inputs={},
+        scheduled_spec_decode_tokens={
+            requests[0].request_id: [10, 42],
+            requests[1].request_id: [13],
+        },
+        finished_req_ids=set(),
+        free_encoder_mm_hashes=[],
+    )
+    rows = np.arange(10, dtype=np.float32).reshape(5, 2)
+    model_output = ModelRunnerOutput(
+        req_ids=[req.request_id for req in requests],
+        req_id_to_index={req.request_id: i for i, req in enumerate(requests)},
+        sampled_token_ids=[[10, 42, 12], [13, 14]],
+        logprobs=None,
+        prompt_logprobs_dict={},
+        pooler_output=[],
+        readouts=TokenReadouts(rows, cu_num_rows=[0, 3, 5]),
+    )
+
+    outputs = scheduler.update_from_output(scheduler_output, model_output)[0].outputs
+
+    assert [out.new_token_ids for out in outputs] == [[10, 42], [13, 14]]
+    np.testing.assert_array_equal(outputs[0].new_readout, rows[0:2])
+    np.testing.assert_array_equal(outputs[1].new_readout, rows[3:5])
 
 
 def test_stop_via_update_from_output():

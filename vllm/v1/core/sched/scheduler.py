@@ -2155,6 +2155,7 @@ class Scheduler(SchedulerInterface):
             stopped = False
             new_logprobs = None
             new_sampling_mask = None
+            new_readout = None
             new_token_ids = generated_token_ids
             pooler_output = pooler_outputs[req_index] if pooler_outputs else None
             kv_transfer_params = None
@@ -2252,6 +2253,10 @@ class Scheduler(SchedulerInterface):
                         req_index, len(new_token_ids)
                     )
 
+            readouts = model_runner_output.readouts
+            if new_token_ids and readouts is not None:
+                new_readout = readouts.slice_request(req_index, len(new_token_ids))
+
             if num_nans_in_logits is not None and req_id in num_nans_in_logits:
                 request.num_nans_in_logits = num_nans_in_logits[req_id]
 
@@ -2283,6 +2288,7 @@ class Scheduler(SchedulerInterface):
                         trace_headers=request.trace_headers,
                         routed_experts=routed_experts,
                         num_nans_in_logits=request.num_nans_in_logits,
+                        new_readout=new_readout,
                     )
                 )
             else:
