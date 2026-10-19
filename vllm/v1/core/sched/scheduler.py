@@ -2040,6 +2040,7 @@ class Scheduler(SchedulerInterface):
         kv_connector_output = model_runner_output.kv_connector_output
         ec_connector_output = model_runner_output.ec_connector_output
         cudagraph_stats = model_runner_output.cudagraph_stats
+        readouts = model_runner_output.readouts
 
         # Every GPU write enqueued by this and earlier steps has completed, so it is
         # safe to return deferred-free blocks to the pool.
@@ -2253,7 +2254,6 @@ class Scheduler(SchedulerInterface):
                         req_index, len(new_token_ids)
                     )
 
-            readouts = model_runner_output.readouts
             if new_token_ids and readouts is not None:
                 new_readout = readouts.slice_request(req_index, len(new_token_ids))
 

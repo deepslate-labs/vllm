@@ -907,7 +907,8 @@ class SupportsTokenReadout(Protocol):
 
         Returns:
             A ``[num_rows, readout_width]`` float32 tensor on the device of
-            ``hidden_states``.
+            ``hidden_states`` that does not alias ``logits``, which the
+            sampler modifies in place afterwards.
 
         """
         ...

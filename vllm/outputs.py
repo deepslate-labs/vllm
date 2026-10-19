@@ -63,10 +63,12 @@ class CompletionOutput:
             token, if requested.
         readout: ``[len(token_ids), readout_width]`` float32 rows, one per
             entry of ``token_ids``, when the model implements
-            ``SupportsTokenReadout``; None otherwise. Row ``i`` is computed at
-            the position that sampled ``token_ids[i]``. Requires
-            ``RequestOutputKind.DELTA`` for per-step rows; other output kinds
-            receive all rows on the final output only.
+            ``SupportsTokenReadout``. Row ``i`` is computed at the position
+            that sampled ``token_ids[i]``. ``RequestOutputKind.DELTA`` delivers
+            the rows of each step's tokens; other output kinds deliver all rows
+            on the final output only. None when the model has no readout, when
+            the output carries no new tokens, and on the intermediate outputs
+            of output kinds other than DELTA.
         finish_reason: The reason why the sequence is finished.
         stop_reason: The stop string or token id that caused the completion
             to stop, None if the completion finished for some other reason
