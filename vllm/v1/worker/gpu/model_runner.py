@@ -2215,9 +2215,11 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             check_ep_fault=self.check_ep_fault,
             pending_aux_output=pending_aux_output,
             readout=readout,
+            # Only the device boundaries are right after adaptive verification
+            # compacts the batch, and the buffer is rewritten by the next step.
             readout_cu_num_rows=(
-                input_batch.cu_num_logits_np.tolist()
-                if readout is not None and input_batch.num_draft_tokens > 0
+                input_batch.cu_num_logits.clone()
+                if readout is not None and readout.shape[0] != input_batch.num_reqs
                 else None
             ),
         )

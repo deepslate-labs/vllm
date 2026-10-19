@@ -124,7 +124,7 @@ class AsyncOutput(AsyncModelRunnerOutput):
         check_ep_fault: bool,
         pending_aux_output: "PendingAuxOutput | None",
         readout: torch.Tensor | None = None,
-        readout_cu_num_rows: list[int] | None = None,
+        readout_cu_num_rows: torch.Tensor | None = None,
     ):
         # NOTE(woosuk): We must retain references to the GPU tensors,
         # as the copy operations are performed on a different CUDA stream than
@@ -153,8 +153,11 @@ class AsyncOutput(AsyncModelRunnerOutput):
                 self.num_nans = async_copy_to_np(sampler_output.num_nans)
             self.num_sampled_tokens_np = async_copy_to_np(num_sampled_tokens)
             self.readout_np: np.ndarray | None = None
+            self.readout_cu_num_rows_np: np.ndarray | None = None
             if readout is not None:
                 self.readout_np = async_copy_to_np(readout)
+                if readout_cu_num_rows is not None:
+                    self.readout_cu_num_rows_np = async_copy_to_np(readout_cu_num_rows)
             self.sampling_mask_tensors: SamplingMaskTensors | None = None
             if sampler_output.sampling_mask_tensors is not None:
                 self.sampling_mask_tensors = (
@@ -197,8 +200,10 @@ class AsyncOutput(AsyncModelRunnerOutput):
             )
 
         if self.readout_np is not None:
+            cu_num_rows = self.readout_cu_num_rows_np
             self.model_runner_output.readouts = TokenReadouts(
-                self.readout_np, self.readout_cu_num_rows
+                self.readout_np,
+                cu_num_rows.tolist() if cu_num_rows is not None else None,
             )
 
         if self.num_nans is not None:
